@@ -1,0 +1,9 @@
+# Caddy gets and renews the HTTPS certificates automatically for these names.
+# The backend has no public route: only the frontend can reach it, on the Docker network.
+app.13-235-91-183.sslip.io {
+	reverse_proxy frontend:3000
+}
+
+n8n.13-235-91-183.sslip.io {
+	reverse_proxy n8n:5678
+}

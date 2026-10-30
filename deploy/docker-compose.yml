@@ -1,0 +1,104 @@
+# Production stack. Run from this folder: docker compose up -d --build
+# N8N_IMAGE and N8N_VOLUME_NAME come from deploy/.env (see .env.example and DEPLOY.md).
+name: flowdoctor
+
+services:
+  n8n:
+    # Pinned to whatever the server runs today, so deploying doesn't also upgrade n8n.
+    image: ${N8N_IMAGE:?Set N8N_IMAGE in deploy/.env to the image the server runs today}
+    restart: unless-stopped
+    environment:
+      N8N_HOST: n8n.13-235-91-183.sslip.io
+      N8N_PORT: "5678"
+      N8N_PROTOCOL: https
+      N8N_EDITOR_BASE_URL: https://n8n.13-235-91-183.sslip.io/
+      WEBHOOK_URL: https://n8n.13-235-91-183.sslip.io/
+      N8N_PROXY_HOPS: "1"
+      # Copy any other variables from the server's current compose file here. See DEPLOY.md step 3.
+    volumes:
+      - n8n_data:/home/node/.n8n
+    # No published port: n8n is only reachable through Caddy and from the backend.
+
+  backend:
+    build: ../backend
+    restart: unless-stopped
+    env_file: ../backend/.env
+    environment:
+      # These win over the same names in backend/.env.
+      N8N_URL: http://n8n:5678
+      DATABASE_PATH: /data/flowdoctor.db
+      # Browsers reach the app over HTTPS, through Caddy and the frontend.
+      COOKIE_SECURE: "true"
+      # The backend has no public route, so webhook URLs go through the frontend's proxy.
+      PUBLIC_API_URL: https://app.13-235-91-183.sslip.io/api
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in deploy/.env}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Set ENCRYPTION_KEY in deploy/.env}
+      DEMO_EMAIL: ${DEMO_EMAIL:-}
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-}
+      INVITE_CODE: ${INVITE_CODE:-}
+    volumes:
+      - backend_data:/data
+    depends_on:
+      - n8n
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  frontend:
+    build:
+      context: ..
+      # Compiled into the image: changing any of these needs a rebuild, not just a restart.
+      args:
+        BACKEND_URL: http://backend:8000
+        NEXT_PUBLIC_USE_MOCKS: "false"
+        NEXT_PUBLIC_DEMO_HINT: ${NEXT_PUBLIC_DEMO_HINT:-false}
+        NEXT_PUBLIC_DEMO_EMAIL: ${NEXT_PUBLIC_DEMO_EMAIL:-}
+        NEXT_PUBLIC_DEMO_PASSWORD: ${NEXT_PUBLIC_DEMO_PASSWORD:-}
+    restart: unless-stopped
+    environment:
+      BACKEND_URL: http://backend:8000
+    depends_on:
+      - backend
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/login').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - frontend
+      - n8n
+
+volumes:
+  # External on purpose: Compose refuses to start if this volume is missing,
+  # instead of creating an empty one and making n8n look wiped.
+  n8n_data:
+    external: true
+    name: ${N8N_VOLUME_NAME:?Set N8N_VOLUME_NAME in deploy/.env to the volume the server uses today}
+  backend_data:
+  # Holds the HTTPS certificates. Keeping it avoids re-requesting them on every deploy.
+  caddy_data:
+  caddy_config:

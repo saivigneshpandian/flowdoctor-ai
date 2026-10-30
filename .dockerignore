@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+.env*
+*.pem
+*.db
+*.tsbuildinfo
+backend
+deploy
+Dockerfile
+.dockerignore
+*.md
