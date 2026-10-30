@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
@@ -8,8 +9,9 @@ from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app import auth, telegram
-from app.api.routes import router
+from app.api.routes import process_telegram_update, router
 from app.n8n.client import N8nError
+from app.services import telegram_bot
 from app.services.repair import ProposalNotFound, ProposalStateError
 
 logging.basicConfig(level=logging.INFO)
@@ -20,8 +22,14 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     auth.bootstrap()
-    await telegram.register_webhook()
+    poller = None
+    if telegram.polling_enabled():
+        poller = asyncio.create_task(telegram_bot.poll_updates(process_telegram_update))
+        logging.getLogger(__name__).info("Telegram polling started.")
     yield
+    if poller:
+        poller.cancel()
+        await asyncio.gather(poller, return_exceptions=True)
 
 
 class NoStoreResponses:

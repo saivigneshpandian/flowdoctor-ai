@@ -157,11 +157,6 @@ python3 -c "import secrets; print(secrets.token_urlsafe(12))"
 ```
 Prints a random `INVITE_CODE`, which people must enter to sign up. While it's empty, sign-up is closed and only the demo account can log in. To change it, edit `deploy/.env` and run `docker compose up -d --force-recreate backend`.
 
-```bash
-python3 -c "import secrets; print(secrets.token_urlsafe(32))"
-```
-Prints a random `TELEGRAM_WEBHOOK_SECRET`. Telegram sends it with every update, which proves the update really came from Telegram. While it's empty, Telegram alerts still arrive but their buttons and replies do nothing.
-
 To show the demo login on the login page, also set `NEXT_PUBLIC_DEMO_HINT=true`, `NEXT_PUBLIC_DEMO_EMAIL` and `NEXT_PUBLIC_DEMO_PASSWORD`. **That password is then public to every visitor.** These are compiled into the frontend, so changing them later means rebuilding it.
 
 **Laptop** (a second terminal)
@@ -343,7 +338,7 @@ Deletes old image layers that nothing uses any more, so repeated builds don't fi
 
 ## Turn on approving fixes from Telegram
 
-Do this once on a server that's already deployed. A new deployment that followed step 5 only needs the check at the end.
+The backend fetches button taps and replies from Telegram itself (long polling), so Telegram never has to reach your server and no secret is needed. Do this once on a server that's already deployed. A new deployment only needs the checks at the end.
 
 **EC2**
 
@@ -353,16 +348,6 @@ cd ~/flowdoctor-ai && git pull
 Gets the new code.
 
 ```bash
-python3 -c "import secrets; print(secrets.token_urlsafe(32))"
-```
-Prints a random secret. Copy it for the next command.
-
-```bash
-nano deploy/.env
-```
-Opens the deployment settings. Add `TELEGRAM_WEBHOOK_SECRET=` followed by the secret. Save with Ctrl+O, Enter, and exit with Ctrl+X.
-
-```bash
 cd deploy && docker compose build backend
 ```
 Rebuilds the backend. The frontend hasn't changed, so it doesn't need a rebuild.
@@ -370,21 +355,23 @@ Rebuilds the backend. The frontend hasn't changed, so it doesn't need a rebuild.
 ```bash
 docker compose up -d
 ```
-Restarts the backend with the new code and secret. It adds the new database columns by itself, and calls Telegram's `setWebhook` every time it starts.
+Restarts the backend. It adds any new database columns by itself. Every time it starts, it clears any Telegram webhook and starts polling. `TELEGRAM_WEBHOOK_SECRET` is now optional, so you can remove it from `deploy/.env` or leave it.
 
 ```bash
 docker compose logs backend --tail 50 | grep -i telegram
 ```
-Should show `Telegram webhook registered`. If it says registration failed, check `TELEGRAM_BOT_TOKEN` and restart the backend.
+Should show `Telegram polling started`, and no `getUpdates failed` or `deleteWebhook failed` lines after it. A one-off `getUpdates failed` during a restart is normal. If it repeats, check `TELEGRAM_BOT_TOKEN`, and that nothing else is polling with this bot.
 
 ```bash
 TOKEN=$(grep '^TELEGRAM_BOT_TOKEN=' ../backend/.env | cut -d= -f2); curl -s "https://api.telegram.org/bot$TOKEN/getWebhookInfo"; unset TOKEN
 ```
-Asks Telegram what it has on file. `url` should end in `/api/telegram/webhook`, and `last_error_message` should be missing. A certificate error here usually means Caddy hasn't got its certificate yet. The command puts your bot token in this shell only briefly, and the output doesn't include it.
+Asks Telegram what it has on file. `url` should be empty, which means polling is in charge. The command puts your bot token in this shell only briefly, and the output doesn't include it.
 
 **Who can decide a fix.** Only the chat ID saved on the owner's Connect screen. If that's a group chat, **every member of the group can approve fixes**, so use a private chat unless that's what you want. Alerts show the cause and a summary of the fix, not the full diff, so open the app first if you want to read the code.
 
-Only one server can own a bot's webhook. If you run the backend on your laptop with the same bot, leave `PUBLIC_API_URL` empty there, so it doesn't take the webhook over.
+**Taps during a restart.** A tap or reply sent while the backend is down is discarded when it starts, so an old approval can't edit a workflow later. Nothing happens to the fix, and you can tap the button again.
+
+**Only one backend can poll a bot.** It only polls when `PUBLIC_API_URL` starts with `https://`. If you run the backend on your laptop with the same bot, leave `PUBLIC_API_URL` empty there, or it will take updates away from the server.
 
 ## Useful commands
 

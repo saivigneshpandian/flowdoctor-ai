@@ -1,7 +1,9 @@
 """Approving and rejecting fixes from Telegram. Every n8n and Telegram call here is fake."""
 
+import asyncio
 import json
 import logging
+import time
 
 import httpx
 import pytest
@@ -10,6 +12,7 @@ from fastapi.testclient import TestClient
 from app import db, telegram
 from app.config import get_settings
 from app.main import app
+from app.services import telegram_bot
 from tests.test_isolation import ALICE, WEBHOOK_BODY, world  # noqa: F401
 
 SECRET = "telegram-test-secret"
@@ -24,12 +27,21 @@ class FakeTelegram:
     def __init__(self):
         self.calls = []
         self.fail = False
+        self.failing = set()
+        self.updates = []
 
-    def handler(self, request):
+    async def handler(self, request):
         method = request.url.path.rsplit("/", 1)[-1]
         self.calls.append((method, json.loads(request.content)))
-        if self.fail:
+        if self.fail or method in self.failing:
             return httpx.Response(500)
+        if method == "getUpdates":
+            if self.updates:
+                return httpx.Response(200, json={"ok": True, "result": [self.updates.pop(0)]})
+            await asyncio.sleep(0.01)
+            return httpx.Response(200, json={"ok": True, "result": []})
+        if method == "deleteWebhook":
+            return httpx.Response(200, json={"ok": True, "result": True})
         return httpx.Response(200, json={"ok": True, "result": {"message_id": ALERT_ID}})
 
     def of(self, method):
@@ -425,55 +437,212 @@ def test_owner_with_no_saved_chat_cant_be_decided_from_telegram(alert):
     assert n8n.writes() == []
 
 
-# Startup
+# Polling
 
 
-def test_startup_registers_the_webhook_with_the_secret(bot, monkeypatch):
-    monkeypatch.setenv("PUBLIC_API_URL", "https://app.13-235-91-183.sslip.io/api/")
+@pytest.fixture
+def polling(bot, monkeypatch):
+    monkeypatch.setenv("PUBLIC_API_URL", "https://app.example.com/api")
+    monkeypatch.setattr(telegram_bot, "RETRY_SECONDS", 0.01)
+    monkeypatch.setattr(telegram_bot, "MAX_RETRY_SECONDS", 0.01)
+    get_settings.cache_clear()
+    return bot
+
+
+def wait_until(condition):
+    deadline = time.monotonic() + 5
+    while not condition():
+        assert time.monotonic() < deadline, "timed out"
+        time.sleep(0.01)
+
+
+def tap_update(update_id, proposal_id, action="approve", chat=ALICE_CHAT):
+    return {
+        "update_id": update_id,
+        "callback_query": {
+            "id": "cb1",
+            "data": f"{action}:{proposal_id}",
+            "message": {"message_id": ALERT_ID, "chat": {"id": int(chat)}},
+        },
+    }
+
+
+def reply_update(update_id, text, chat=ALICE_CHAT):
+    return {
+        "update_id": update_id,
+        "message": {
+            "message_id": 9,
+            "chat": {"id": int(chat)},
+            "text": text,
+            "reply_to_message": {"message_id": ALERT_ID},
+        },
+    }
+
+
+def test_startup_clears_the_webhook_then_polls_without_a_secret(polling, monkeypatch):
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "")
     get_settings.cache_clear()
 
     with TestClient(app):
-        pass
+        wait_until(lambda: polling.of("getUpdates"))
 
-    assert bot.of("setWebhook") == [
-        {
-            "url": "https://app.13-235-91-183.sslip.io/api/telegram/webhook",
-            "secret_token": SECRET,
-            "allowed_updates": ["message", "callback_query"],
-        }
-    ]
+    methods = [name for name, _ in polling.calls]
+    assert methods[0] == "deleteWebhook"
+    assert "setWebhook" not in methods
+    assert polling.of("deleteWebhook") == [{"drop_pending_updates": True}]
+    assert polling.of("getUpdates")[0] == {
+        "timeout": telegram.LONG_POLL_SECONDS,
+        "allowed_updates": ["message", "callback_query"],
+    }
 
 
 @pytest.mark.parametrize(
-    ("token", "secret", "public"),
-    [
-        ("", SECRET, "https://app.example.com/api"),
-        (TOKEN, "", "https://app.example.com/api"),
-        (TOKEN, SECRET, ""),
-        (TOKEN, SECRET, "http://localhost:8000"),
-    ],
-    ids=["no-token", "no-secret", "no-public-url", "not-https"],
+    ("token", "public"),
+    [("", "https://app.example.com/api"), (TOKEN, ""), (TOKEN, "http://localhost:8000")],
+    ids=["no-token", "no-public-url", "not-https"],
 )
-def test_startup_leaves_the_webhook_alone_when_not_set_up(bot, monkeypatch, token, secret, public):
+def test_startup_doesnt_touch_telegram_when_not_set_up(polling, monkeypatch, token, public):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", token)
-    monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", secret)
     monkeypatch.setenv("PUBLIC_API_URL", public)
     get_settings.cache_clear()
 
     with TestClient(app):
-        pass
+        time.sleep(0.05)
 
-    assert bot.calls == []
+    assert polling.calls == []
 
 
-def test_failed_registration_doesnt_stop_the_server_or_leak_the_token(bot, monkeypatch, caplog):
-    monkeypatch.setenv("PUBLIC_API_URL", "https://app.example.com/api")
-    get_settings.cache_clear()
-    bot.fail = True
+def test_polled_button_applies_the_fix_and_reports_it(alert, polling):
+    _, proposal, n8n = alert
+    polling.updates.append(tap_update(70, proposal["id"]))
+
+    with TestClient(app):
+        wait_until(lambda: polling.of("editMessageReplyMarkup"))
+
+    assert status(proposal) == "approved"
+    assert len(n8n.puts) == 1
+    assert "Recovered: 1" in polling.texts()[0]
+
+
+def test_polled_reply_uses_the_same_decision_parser(alert, polling):
+    _, proposal, n8n = alert
+    polling.updates.append(reply_update(70, "no idea why this failed"))
+    polling.updates.append(reply_update(71, "no"))
+
+    with TestClient(app):
+        wait_until(lambda: status(proposal) == "rejected")
+
+    assert n8n.writes() == []
+
+
+def test_polled_updates_from_another_chat_are_refused(alert, polling):
+    _, proposal, n8n = alert
+    polling.updates.append(tap_update(70, proposal["id"], chat=BOB_CHAT))
+    polling.updates.append(reply_update(71, "approve", chat=BOB_CHAT))
+
+    with TestClient(app):
+        wait_until(lambda: polling.of("answerCallbackQuery"))
+        time.sleep(0.05)
+
+    assert status(proposal) == "open"
+    assert n8n.writes() == []
+    assert polling.of("sendMessage") == []
+
+
+def test_polling_moves_past_each_update(polling):
+    polling.updates.append({"update_id": 70})
+    polling.updates.append({"update_id": 71})
+
+    with TestClient(app):
+        wait_until(lambda: any(call.get("offset") == 72 for call in polling.of("getUpdates")))
+
+    assert [call.get("offset") for call in polling.of("getUpdates")][:3] == [None, 71, 72]
+
+
+def test_polling_survives_failures_without_leaking_the_token(polling, caplog):
+    polling.failing = {"deleteWebhook", "getUpdates"}
 
     with caplog.at_level(logging.INFO), TestClient(app) as client:
+        wait_until(lambda: len(polling.of("deleteWebhook")) >= 2)
+        assert polling.of("getUpdates") == []
+
+        polling.failing = {"getUpdates"}
+        wait_until(lambda: len(polling.of("getUpdates")) >= 2)
         assert client.get("/health").status_code == 200
 
-    assert "registration failed" in caplog.text
+        polling.failing = set()
+        polling.updates.append({"update_id": 70})
+        wait_until(lambda: any(call.get("offset") == 71 for call in polling.of("getUpdates")))
+
+    assert "getUpdates failed" in caplog.text
     assert "bot-token-value" not in caplog.text
-    assert SECRET not in caplog.text
+
+
+def run_poller(process, body):
+    """Runs the poller against the fake Telegram for as long as body takes."""
+
+    async def main():
+        poller = asyncio.create_task(telegram_bot.poll_updates(process))
+        await body()
+        poller.cancel()
+        await asyncio.gather(poller, return_exceptions=True)
+
+    asyncio.run(main())
+
+
+async def wait_for_list(items):
+    while not items:
+        await asyncio.sleep(0.01)
+
+
+def test_a_slow_repair_doesnt_hold_up_the_next_update(polling):
+    polling.updates.extend([{"update_id": 1}, {"update_id": 2}])
+    release = []
+    finished = []
+
+    async def process(update):
+        if update["update_id"] == 1:
+            await wait_for_list(release)
+            finished.append(1)
+        else:
+            release.append(True)
+
+    async def body():
+        await asyncio.wait_for(wait_for_list(finished), 5)
+
+    run_poller(process, body)
+
+    assert finished == [1]
+
+
+def test_shutdown_lets_a_running_repair_finish(polling):
+    polling.updates.append({"update_id": 1})
+    started = []
+    finished = []
+
+    async def process(update):
+        started.append(update)
+        await asyncio.sleep(0.05)
+        finished.append(update)
+
+    async def body():
+        await asyncio.wait_for(wait_for_list(started), 5)
+
+    run_poller(process, body)
+
+    assert finished
+
+
+def test_a_malformed_update_doesnt_stop_polling(polling):
+    polling.updates.extend([{"no_update_id": True}, {"update_id": 5}])
+    seen = []
+
+    async def process(update):
+        seen.append(update)
+
+    async def body():
+        await asyncio.wait_for(wait_for_list(seen), 5)
+
+    run_poller(process, body)
+
+    assert seen == [{"update_id": 5}]

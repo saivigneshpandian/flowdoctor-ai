@@ -354,6 +354,7 @@ def require_telegram_secret(
 
 @router.post("/telegram/webhook", dependencies=[Depends(require_telegram_secret)])
 async def telegram_webhook(update: dict[str, Any], background: BackgroundTasks) -> dict[str, bool]:
+    # Unused while the server polls, and off unless TELEGRAM_WEBHOOK_SECRET is set.
     # A repair can take a while, and Telegram resends updates it doesn't get a quick answer to.
     background.add_task(process_telegram_update, update)
     return {"ok": True}
