@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from app import auth
+from app import auth, telegram
 from app.api.routes import router
 from app.n8n.client import N8nError
 from app.services.repair import ProposalNotFound, ProposalStateError
@@ -20,6 +20,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     auth.bootstrap()
+    await telegram.register_webhook()
     yield
 
 

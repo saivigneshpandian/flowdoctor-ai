@@ -36,6 +36,7 @@ services:
       DEMO_EMAIL: ${DEMO_EMAIL:-}
       DEMO_PASSWORD: ${DEMO_PASSWORD:-}
       INVITE_CODE: ${INVITE_CODE:-}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
     volumes:
       - backend_data:/data
     depends_on:

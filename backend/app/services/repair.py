@@ -102,6 +102,16 @@ def reject(proposal_id: str, user_id: str) -> None:
     db.resolve_incident(proposal["incident_id"], "rejected")
 
 
+def record_result(proposal_id: str, user_id: str, result: RepairResult) -> RepairResult:
+    """Keeps a button-driven repair result in the proposal's thread, as a typed one already is."""
+    proposal = db.get_proposal(proposal_id, user_id)
+    if proposal and proposal["thread_id"]:
+        db.append_thread_messages(
+            proposal["thread_id"], [("agent", {"type": "result", **result.model_dump()})]
+        )
+    return result
+
+
 def _claim(proposal_id: str, user_id: str, kind: str | None) -> dict[str, Any]:
     # Another user's proposal looks exactly like one that doesn't exist.
     proposal = db.get_proposal(proposal_id, user_id)

@@ -400,7 +400,12 @@ def alerts(monkeypatch):
         sent.append(text)
         return True
 
+    async def fake_alert(text, chat_id=None, proposal_id=None):
+        await fake_send(text, chat_id)
+        return None
+
     monkeypatch.setattr(telegram, "send_message", fake_send)
+    monkeypatch.setattr(telegram, "send_alert", fake_alert)
     return sent
 
 
@@ -416,7 +421,7 @@ def test_webhook_stores_incident_and_alerts_once(api, n8n, alerts, monkeypatch):
     assert len(db.list_incidents(TEST_USER)) == 1
     assert "Lead Capture failed" in alerts[0]
     assert "Normalize Lead" in alerts[0]
-    assert "Open FlowDoctor to approve" in alerts[0]
+    assert "Tap a button or reply to this message" in alerts[0]
     assert n8n.writes() == []
 
     post_webhook(api)

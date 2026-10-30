@@ -1,8 +1,9 @@
+import hmac
 import logging
 from typing import Any, AsyncIterator
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from app import auth, db, telegram
@@ -29,7 +30,7 @@ from app.schemas import (
     Workflow,
     WorkflowError,
 )
-from app.services import repair
+from app.services import repair, telegram_bot
 from app.services.workflows import list_workflow_health
 
 logger = logging.getLogger(__name__)
@@ -227,16 +228,6 @@ async def chat(body: ChatRequest, user: dict[str, Any] = Depends(auth.current_us
     return ChatResponse(messages=messages, thread_id=thread["id"])
 
 
-def _record_result(proposal_id: str, user_id: str, result: RepairResult) -> RepairResult:
-    """Keeps a button-driven repair result in the proposal's thread, as a typed one already is."""
-    proposal = db.get_proposal(proposal_id, user_id)
-    if proposal and proposal["thread_id"]:
-        db.append_thread_messages(
-            proposal["thread_id"], [("agent", {"type": "result", **result.model_dump()})]
-        )
-    return result
-
-
 @router.post("/fix/{proposal_id}/approve", response_model=RepairResult)
 async def approve(
     proposal_id: str,
@@ -244,7 +235,7 @@ async def approve(
     client: N8nClient = Depends(connected_client),
 ) -> RepairResult:
     result = await repair.approve(proposal_id, user["id"], client)
-    return _record_result(proposal_id, user["id"], result)
+    return repair.record_result(proposal_id, user["id"], result)
 
 
 @router.post("/fix/{proposal_id}/reject", response_model=OkResponse)
@@ -260,7 +251,7 @@ async def done(
     client: N8nClient = Depends(connected_client),
 ) -> RepairResult:
     result = await repair.complete_manual(proposal_id, user["id"], client)
-    return _record_result(proposal_id, user["id"], result)
+    return repair.record_result(proposal_id, user["id"], result)
 
 
 @router.get("/incidents", response_model=list[Incident])
@@ -326,15 +317,50 @@ async def process_failure(user_id: str, payload: WebhookPayload) -> None:
         db.append_thread_messages(
             thread["id"], [("agent", message) for message in state.get("messages") or []]
         )
-        await telegram.send_message(
-            f"{context.workflow_name} failed\n"
-            f"Node: {context.failed_node}\n"
-            f"Cause: {state['diagnosis'].root_cause}\n"
-            "Open FlowDoctor to approve",
-            chat_id,
+        proposal = next(
+            (m for m in state.get("messages") or [] if m.get("type") == "proposal"), None
         )
+        text = telegram.format_alert(
+            context.workflow_name,
+            context.failed_node,
+            state["diagnosis"].root_cause,
+            proposal["explanation"] if proposal else None,
+        )
+        message_id = await telegram.send_alert(
+            text, chat_id, proposal["proposal_id"] if proposal else None
+        )
+        # Replies find their fix through the alert they answer, manual fixes included.
+        saved = next(
+            (m["proposal_id"] for m in state.get("messages") or [] if m.get("proposal_id")), None
+        )
+        if message_id and saved and chat_id:
+            db.set_proposal_alert(saved, chat_id, message_id)
         return
     # A retry or a repeat of an open incident stays quiet; a failed diagnosis still gets an alert.
     has_error = any(m.get("type") == "error" for m in state.get("messages") or [])
     if state.get("failed") or has_error:
         await telegram.send_message(NOT_DIAGNOSED.format(name=workflow_name), chat_id)
+
+
+def require_telegram_secret(
+    x_telegram_bot_api_secret_token: str = Header(default=""),
+) -> None:
+    secret = get_settings().telegram_webhook_secret
+    if not secret:
+        raise HTTPException(503, "Telegram replies aren't configured.")
+    if not hmac.compare_digest(x_telegram_bot_api_secret_token.encode(), secret.encode()):
+        raise HTTPException(401, "Invalid secret.")
+
+
+@router.post("/telegram/webhook", dependencies=[Depends(require_telegram_secret)])
+async def telegram_webhook(update: dict[str, Any], background: BackgroundTasks) -> dict[str, bool]:
+    # A repair can take a while, and Telegram resends updates it doesn't get a quick answer to.
+    background.add_task(process_telegram_update, update)
+    return {"ok": True}
+
+
+async def process_telegram_update(update: dict[str, Any]) -> None:
+    try:
+        await telegram_bot.handle_update(update, build_client)
+    except Exception:
+        logger.exception("Telegram update failed")

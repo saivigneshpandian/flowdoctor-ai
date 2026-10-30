@@ -51,7 +51,9 @@ CREATE TABLE IF NOT EXISTS proposals (
     affected_execution_ids TEXT NOT NULL,
     messages TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    thread_id TEXT REFERENCES threads (id)
+    thread_id TEXT REFERENCES threads (id),
+    telegram_chat_id TEXT,
+    telegram_message_id INTEGER
 );
 CREATE TABLE IF NOT EXISTS threads (
     id TEXT PRIMARY KEY,
@@ -104,6 +106,9 @@ def init_db() -> None:
         columns = {row["name"] for row in connection.execute("PRAGMA table_info(proposals)")}
         if "thread_id" not in columns:
             connection.execute("ALTER TABLE proposals ADD COLUMN thread_id TEXT REFERENCES threads (id)")
+        if "telegram_message_id" not in columns:
+            connection.execute("ALTER TABLE proposals ADD COLUMN telegram_chat_id TEXT")
+            connection.execute("ALTER TABLE proposals ADD COLUMN telegram_message_id INTEGER")
 
 
 def create_user(email: str, password_hash: str) -> dict[str, Any]:
@@ -305,6 +310,30 @@ def get_proposal(proposal_id: str, user_id: str) -> dict[str, Any] | None:
             "SELECT * FROM proposals WHERE id = ? AND user_id = ?", (proposal_id, user_id)
         ).fetchone()
     return _decode_proposal(row) if row else None
+
+
+def get_proposal_by_id(proposal_id: str) -> dict[str, Any] | None:
+    """For Telegram, where the caller is a chat rather than a user. Check the chat before acting."""
+    with _connect() as connection:
+        row = connection.execute("SELECT * FROM proposals WHERE id = ?", (proposal_id,)).fetchone()
+    return _decode_proposal(row) if row else None
+
+
+def get_proposal_by_alert(chat_id: str, message_id: int) -> dict[str, Any] | None:
+    with _connect() as connection:
+        row = connection.execute(
+            "SELECT * FROM proposals WHERE telegram_chat_id = ? AND telegram_message_id = ?",
+            (chat_id, message_id),
+        ).fetchone()
+    return _decode_proposal(row) if row else None
+
+
+def set_proposal_alert(proposal_id: str, chat_id: str, message_id: int) -> None:
+    with _connect() as connection:
+        connection.execute(
+            "UPDATE proposals SET telegram_chat_id = ?, telegram_message_id = ? WHERE id = ?",
+            (chat_id, message_id, proposal_id),
+        )
 
 
 def list_open_proposals(

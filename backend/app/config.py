@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     n8n_api_key: str = ""
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
+    # Telegram sends this back on every update. Replies and buttons are off while it's empty.
+    telegram_webhook_secret: str = ""
     database_path: str = "./flowdoctor.db"
     secret_key: str = ""
     encryption_key: str = ""

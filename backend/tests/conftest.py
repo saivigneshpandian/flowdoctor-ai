@@ -41,6 +41,7 @@ def database(tmp_path, monkeypatch):
         "N8N_API_KEY",
         "TELEGRAM_BOT_TOKEN",
         "TELEGRAM_CHAT_ID",
+        "TELEGRAM_WEBHOOK_SECRET",
         "GROQ_API_KEY",
         "GROQ_MODEL",
         "DEMO_EMAIL",

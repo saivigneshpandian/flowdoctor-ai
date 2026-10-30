@@ -221,7 +221,11 @@ def test_webhook_diagnosis_lands_in_the_owners_workflow_thread(world, monkeypatc
     async def no_send(text, chat_id=None):
         return True
 
+    async def no_alert(text, chat_id=None, proposal_id=None):
+        return None
+
     monkeypatch.setattr(telegram, "send_message", no_send)
+    monkeypatch.setattr(telegram, "send_alert", no_alert)
     token = db.get_user_by_email(ALICE["email"])["webhook_token"]
 
     bob.post(f"/webhook/n8n-error/{token}", json=WEBHOOK_BODY)

@@ -172,7 +172,12 @@ def alerts(monkeypatch):
         sent.append((text, chat_id))
         return True
 
+    async def fake_alert(text, chat_id=None, proposal_id=None):
+        await fake_send(text, chat_id)
+        return None
+
     monkeypatch.setattr(telegram, "send_message", fake_send)
+    monkeypatch.setattr(telegram, "send_alert", fake_alert)
     return sent
 
 
