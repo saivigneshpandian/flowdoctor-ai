@@ -19,6 +19,8 @@ class FakeN8n:
         self.puts: list[dict[str, Any]] = []
         self.retry_outcome = "success"
         self.fail_on: set[str] = set()
+        # Shown in the workflow list only. Their executions aren't modelled.
+        self.extra_workflows: list[dict[str, Any]] = []
         self.webhooks: list[dict[str, Any]] = []
         self.webhook_statuses: list[int] = []
         self.failures_from_webhooks = 0
@@ -50,7 +52,7 @@ class FakeN8n:
             return self._webhook(request)
 
         if method == "GET" and path == "/workflows":
-            return httpx.Response(200, json={"data": [self.workflow], "nextCursor": None})
+            return httpx.Response(200, json={"data": [self.workflow, *self.extra_workflows], "nextCursor": None})
         if method == "GET" and path == f"/workflows/{self.workflow_id}":
             return httpx.Response(200, json=self.workflow)
         if method == "PUT" and path == f"/workflows/{self.workflow_id}":

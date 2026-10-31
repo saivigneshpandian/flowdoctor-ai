@@ -37,6 +37,7 @@ services:
       DEMO_PASSWORD: ${DEMO_PASSWORD:-}
       INVITE_CODE: ${INVITE_CODE:-}
       TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+      IGNORE_TAG: ${IGNORE_TAG:-flowdoctor-ignore}
     volumes:
       - backend_data:/data
     depends_on:

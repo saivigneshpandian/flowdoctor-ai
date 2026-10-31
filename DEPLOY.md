@@ -414,6 +414,31 @@ The workflow also needs a webhook node. If the node or webhook is missing, the b
 - **Judges share one account.** One judge's click can reject a fix another judge is looking at, and all of them can approve fixes.
 - **The limit resets on restart.** It's kept in the backend's memory.
 
+## Hide a workflow from FlowDoctor
+
+Add the tag `flowdoctor-ignore` to a workflow in n8n, for example to Error Handler. FlowDoctor then leaves it out of the sidebar and the health counts, won't diagnose it from chat, and skips its failures with no diagnosis and no Telegram alert. It reads tags live from n8n, so adding or removing a tag needs no restart. The sidebar catches up within 15 seconds.
+
+To use a different tag name, set `IGNORE_TAG` in `deploy/.env`. The match ignores upper and lower case.
+
+**EC2**, from `~/flowdoctor-ai`, once to get this feature:
+
+```bash
+git pull
+```
+Gets the new code.
+
+```bash
+cd deploy && docker compose build backend
+```
+Rebuilds the backend. The frontend hasn't changed.
+
+```bash
+docker compose up -d
+```
+Restarts it with the new code.
+
+Chats and incidents from before you added the tag stay visible, and a fix that was already open can still be decided.
+
 ## Useful commands
 
 **EC2**, from `~/flowdoctor-ai/deploy`:

@@ -32,7 +32,7 @@ from app.schemas import (
     WorkflowError,
 )
 from app.services import demo, repair, telegram_bot
-from app.services.workflows import list_workflow_health
+from app.services.workflows import is_ignored, list_workflow_health
 
 logger = logging.getLogger(__name__)
 
@@ -312,6 +312,14 @@ async def n8n_error(
     return {"ok": True}
 
 
+async def _workflow_is_ignored(client: N8nClient, workflow_id: str) -> bool:
+    try:
+        return is_ignored(await client.get_workflow(workflow_id))
+    except N8nError as exc:
+        logger.warning("Couldn't read the tags of workflow %s: %s", workflow_id, exc.message)
+        return False
+
+
 async def process_failure(user_id: str, payload: WebhookPayload) -> None:
     workflow_name = (payload.workflow.name if payload.workflow else None) or "A workflow"
     workflow_id = payload.workflow.id if payload.workflow else None
@@ -325,6 +333,10 @@ async def process_failure(user_id: str, payload: WebhookPayload) -> None:
 
     client = build_client(settings["n8n_url"], settings["api_key"])
     try:
+        # If the tags can't be read, carry on: losing a real failure is worse than one extra alert.
+        if await _workflow_is_ignored(client, str(workflow_id)):
+            logger.info("Skipped a failure from ignored workflow %s", workflow_id)
+            return
         state = await run_agent(
             client, user_id, workflow_id=str(workflow_id), webhook_execution_id=str(execution_id)
         )

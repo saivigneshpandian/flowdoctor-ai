@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     cookie_secure: bool = False
     # Base of the webhook URL shown to users. Falls back to the URL of the current request.
     public_api_url: str = ""
+    # Workflows with this n8n tag are hidden and never diagnosed. Empty turns this off.
+    ignore_tag: str = "flowdoctor-ignore"
 
 
 @lru_cache

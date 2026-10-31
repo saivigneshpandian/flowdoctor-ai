@@ -2,14 +2,30 @@ import asyncio
 from typing import Any
 
 from app import db
+from app.config import get_settings
 from app.n8n.client import N8nClient, is_unrecovered
 from app.schemas import Workflow
 
 MAX_CONCURRENT = 5
 
 
+def is_ignored(workflow: dict[str, Any]) -> bool:
+    ignore_tag = get_settings().ignore_tag.strip().casefold()
+    if not ignore_tag:
+        return False
+    tags = workflow.get("tags") or []
+    return any(
+        isinstance(tag, dict) and str(tag.get("name", "")).strip().casefold() == ignore_tag
+        for tag in tags
+    )
+
+
+async def list_visible_workflows(client: N8nClient) -> list[dict[str, Any]]:
+    return [workflow for workflow in await client.list_workflows() if not is_ignored(workflow)]
+
+
 async def list_workflow_health(client: N8nClient, user_id: str) -> list[Workflow]:
-    workflows = await client.list_workflows()
+    workflows = await list_visible_workflows(client)
     pending = db.open_proposal_workflow_ids(user_id)
     semaphore = asyncio.Semaphore(MAX_CONCURRENT)
 

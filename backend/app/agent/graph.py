@@ -33,7 +33,7 @@ from app.schemas import (
     TextMessage,
 )
 from app.services import repair
-from app.services.workflows import list_workflow_health
+from app.services.workflows import list_visible_workflows, list_workflow_health
 
 logger = logging.getLogger(__name__)
 
@@ -327,7 +327,7 @@ def build_graph(client: N8nClient, user_id: str, llm_factory: Any = GeminiAgent)
         if decision:
             return {"route": "decide", "decision": decision}
 
-        workflows = await client.list_workflows()
+        workflows = await list_visible_workflows(client)
         named = match_workflows(message, workflows)
         if STATUS.search(message) and not named:
             return {"route": "status"}

@@ -51,6 +51,7 @@ def database(tmp_path, monkeypatch):
     )
     for name in names:
         monkeypatch.setenv(name, "")
+    monkeypatch.setenv("IGNORE_TAG", "flowdoctor-ignore")
     monkeypatch.setenv("COOKIE_SECURE", "false")
     monkeypatch.setenv("INVITE_CODE", "test-invite")
     monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough-for-hs256")

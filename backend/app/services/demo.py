@@ -12,6 +12,7 @@ from app import db
 from app.n8n.client import N8nClient, is_unrecovered
 from app.schemas import SimulateFailureResult
 from app.services import repair
+from app.services.workflows import is_ignored
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +87,7 @@ def _reserve(workflow_id: str) -> None:
 
 def _scenario(workflow: dict[str, Any]) -> Scenario:
     scenario = SCENARIOS.get(workflow.get("name", ""))
-    if scenario is None:
+    if scenario is None or is_ignored(workflow):
         raise SimulationError(f'"{workflow.get("name")}" has no demo failure to simulate.')
     return scenario
 
