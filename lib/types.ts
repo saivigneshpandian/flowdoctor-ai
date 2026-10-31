@@ -108,6 +108,15 @@ export interface Me {
   email: string;
   webhook_url: string;
   has_connection: boolean;
+  is_demo: boolean;
+}
+
+export interface SimulateFailureResult {
+  workflow_id: string;
+  workflow_name: string;
+  // Unresolved failures before the test lead. One more than this means the failure has landed.
+  failed_count: number;
+  cooldown_seconds: number;
 }
 
 export interface ConnectRequest {
@@ -182,4 +191,5 @@ export interface ApiClient {
   rejectFix(proposalId: string): Promise<RejectResponse>;
   completeFix(proposalId: string): Promise<RepairResult>;
   getIncidents(): Promise<Incident[]>;
+  simulateFailure(): Promise<SimulateFailureResult>;
 }

@@ -30,8 +30,9 @@ class N8nClient:
         api_key: str,
         transport: httpx.AsyncBaseTransport | None = None,
     ):
+        self._origin = normalize_base_url(base_url)
         self._http = httpx.AsyncClient(
-            base_url=f"{normalize_base_url(base_url)}/api/v1",
+            base_url=f"{self._origin}/api/v1",
             headers={"X-N8N-API-KEY": api_key},
             timeout=TIMEOUT,
             transport=transport,
@@ -113,6 +114,21 @@ class N8nClient:
         if new_id is None:
             raise N8nError(f"n8n did not return a new execution id for retry of {execution_id}.")
         return str(new_id)
+
+    async def trigger_webhook(self, path: str, body: dict[str, Any]) -> int:
+        """Posts to a production webhook, as an outside caller would. Returns the HTTP status."""
+        request = self._http.build_request(
+            "POST", f"{self._origin}/webhook/{path.lstrip('/')}", json=body
+        )
+        # n8n saves webhook headers in the execution, and execution data goes to the LLM.
+        del request.headers["X-N8N-API-KEY"]
+        try:
+            response = await self._http.send(request)
+        except httpx.TimeoutException as exc:
+            raise N8nError("n8n timed out on its webhook.") from exc
+        except httpx.HTTPError as exc:
+            raise N8nError("Could not reach n8n's webhook.") from exc
+        return response.status_code
 
     async def _paged(self, path: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []

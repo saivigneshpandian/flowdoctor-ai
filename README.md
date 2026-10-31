@@ -117,7 +117,7 @@ For production, see [DEPLOY.md](DEPLOY.md).
 
 ## Tests
 
-**246 backend tests pass**, run with `pytest` from `backend/`. They cover diagnosis and repair, patch validation, rollback, LLM fallback, accounts, user isolation, threads and Telegram decisions.
+**268 backend tests pass**, run with `pytest` from `backend/`. They cover diagnosis and repair, patch validation, rollback, LLM fallback, accounts, user isolation, threads and Telegram decisions.
 
 The tests use fake n8n and Telegram services, so they make no live calls. There are no automated frontend tests.
 

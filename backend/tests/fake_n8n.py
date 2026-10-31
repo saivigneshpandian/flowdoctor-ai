@@ -19,6 +19,9 @@ class FakeN8n:
         self.puts: list[dict[str, Any]] = []
         self.retry_outcome = "success"
         self.fail_on: set[str] = set()
+        self.webhooks: list[dict[str, Any]] = []
+        self.webhook_statuses: list[int] = []
+        self.failures_from_webhooks = 0
         self._next_id = 100
 
     def add_failure(self, execution_id: str) -> None:
@@ -42,6 +45,9 @@ class FakeN8n:
         self.calls.append((method, path))
         if f"{method} {path}" in self.fail_on:
             return httpx.Response(500, json={"message": "boom"})
+
+        if method == "POST" and path.startswith("/webhook/"):
+            return self._webhook(request)
 
         if method == "GET" and path == "/workflows":
             return httpx.Response(200, json={"data": [self.workflow], "nextCursor": None})
@@ -71,6 +77,18 @@ class FakeN8n:
                 return httpx.Response(404, json={"message": "not found"})
             return httpx.Response(200, json=found)
         return httpx.Response(404, json={"message": f"unexpected {method} {path}"})
+
+    def _webhook(self, request: httpx.Request) -> httpx.Response:
+        self.webhooks.append(
+            {"body": request.content, "api_key": request.headers.get("X-N8N-API-KEY")}
+        )
+        status = self.webhook_statuses.pop(0) if self.webhook_statuses else 200
+        if status != 404:
+            # A delivered lead runs the workflow, which fails on the capital E.
+            self.failures_from_webhooks += 1
+            self.add_failure(str(self._next_id))
+            self._next_id += 1
+        return httpx.Response(status, json={"message": "Workflow was started"})
 
     def _retry(self, execution_id: str, body: dict[str, Any]) -> httpx.Response:
         assert body == {"loadWorkflow": True}

@@ -50,6 +50,11 @@ def normalize_email(email: str) -> str:
     return email.strip().lower()
 
 
+def is_demo_user(user: dict[str, Any]) -> bool:
+    demo_email = get_settings().demo_email
+    return bool(demo_email) and user["email"] == normalize_email(demo_email)
+
+
 def check_invite_code(invite_code: str) -> None:
     expected = get_settings().invite_code
     if not expected:

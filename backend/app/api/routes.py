@@ -23,6 +23,7 @@ from app.schemas import (
     OkResponse,
     RepairResult,
     SignupRequest,
+    SimulateFailureResult,
     Thread,
     ThreadCreate,
     ThreadDetail,
@@ -30,7 +31,7 @@ from app.schemas import (
     Workflow,
     WorkflowError,
 )
-from app.services import repair, telegram_bot
+from app.services import demo, repair, telegram_bot
 from app.services.workflows import list_workflow_health
 
 logger = logging.getLogger(__name__)
@@ -69,6 +70,7 @@ def _me(user: dict[str, Any], request: Request) -> Me:
         email=user["email"],
         webhook_url=f"{base.rstrip('/')}/webhook/n8n-error/{user['webhook_token']}",
         has_connection=auth.load_connection(user["id"]) is not None,
+        is_demo=auth.is_demo_user(user),
     )
 
 
@@ -252,6 +254,25 @@ async def done(
 ) -> RepairResult:
     result = await repair.complete_manual(proposal_id, user["id"], client)
     return repair.record_result(proposal_id, user["id"], result)
+
+
+def demo_user(user: dict[str, Any] = Depends(auth.current_user)) -> dict[str, Any]:
+    if not auth.is_demo_user(user):
+        raise HTTPException(403, "Only the demo account can do this.")
+    return user
+
+
+@router.post("/demo/simulate-failure", response_model=SimulateFailureResult)
+async def simulate_failure(
+    user: dict[str, Any] = Depends(demo_user),
+    client: N8nClient = Depends(connected_client),
+) -> SimulateFailureResult:
+    try:
+        return await demo.simulate_failure(user["id"], client)
+    except demo.CoolingDown as exc:
+        raise HTTPException(429, str(exc), headers={"Retry-After": str(exc.retry_after)}) from exc
+    except demo.SimulationError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @router.get("/incidents", response_model=list[Incident])

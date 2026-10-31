@@ -373,6 +373,42 @@ Asks Telegram what it has on file. `url` should be empty, which means polling is
 
 **Only one backend can poll a bot.** It only polls when `PUBLIC_API_URL` starts with `https://`. If you run the backend on your laptop with the same bot, leave `PUBLIC_API_URL` empty there, or it will take updates away from the server.
 
+## The "Simulate a failure" button
+
+Logged in as the demo account (`DEMO_EMAIL`), the dashboard shows a **Simulate a failure** button, so judges can try the full flow. No other account sees it, and the backend refuses it for anyone else. It needs no new settings.
+
+**EC2**, from `~/flowdoctor-ai`:
+
+```bash
+git pull
+```
+Gets the new code.
+
+```bash
+cd deploy && docker compose build backend frontend
+```
+Rebuilds both, because both changed.
+
+```bash
+docker compose up -d
+```
+Restarts them with the new code.
+
+Each click does this through the n8n API, at most once per 2 minutes:
+
+1. Rejects any open fixes for Lead Capture.
+2. Puts the original bug back in Lead Capture's `Normalize Lead` node and republishes the workflow.
+3. Sends one test lead with a capital `Email` field to the workflow's webhook.
+
+It needs a workflow named exactly `Lead Capture`, with a `Normalize Lead` node and a webhook node. If that's missing, the button shows the problem and changes nothing.
+
+**What this means for you:**
+
+- **It overwrites that node.** Point the demo account at an n8n where it's fine for Lead Capture to be broken on purpose.
+- **It can message you.** If Lead Capture has the Error Handler workflow set up, every click also starts a background diagnosis, which uses LLM quota and sends an alert to the demo account's Telegram chat.
+- **Judges share one account.** One judge's click can reject a fix another judge is looking at, and all of them can approve fixes.
+- **The limit resets on restart.** It's kept in the backend's memory.
+
 ## Useful commands
 
 **EC2**, from `~/flowdoctor-ai/deploy`:

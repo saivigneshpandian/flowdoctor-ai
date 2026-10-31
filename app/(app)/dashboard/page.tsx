@@ -1,8 +1,9 @@
 "use client";
 
-import { Loader2, TriangleAlert, X } from "lucide-react";
+import { FlaskConical, Loader2, TriangleAlert, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { useAuth } from "@/components/auth-provider";
 import { CardShell } from "@/components/cards/card-shell";
 import { DiagnosisCard } from "@/components/cards/diagnosis-card";
 import { InstructionCard, type InstructionStatus } from "@/components/cards/instruction-card";
@@ -11,6 +12,7 @@ import { ResultCard } from "@/components/cards/result-card";
 import { ChatInput, type ChatInputHandle } from "@/components/chat-input";
 import { EcgTrace, type TraceTone } from "@/components/ecg-trace";
 import { StatusDot } from "@/components/status-dot";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useWorkspace, type ActionState, type SendingKind } from "@/components/workspace-provider";
 import type { AgentMessage, Workflow } from "@/lib/types";
@@ -129,6 +131,42 @@ function AgentEntry({ message }: { message: AgentMessage }) {
   }
 }
 
+function SimulateFailure() {
+  const { busy, simulation, simulationCoolingDown, simulateFailure } = useWorkspace();
+  const breaking = simulation.status === "breaking";
+
+  return (
+    <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        disabled={busy || simulationCoolingDown}
+        onClick={() => void simulateFailure()}
+        className="gap-1.5"
+      >
+        {breaking ? (
+          <Loader2 aria-hidden className="size-3.5 animate-spin" />
+        ) : (
+          <FlaskConical aria-hidden className="size-3.5" />
+        )}
+        Simulate a failure
+      </Button>
+      <div role="status" className="min-w-0 text-sm">
+        {breaking && (
+          <span className="text-muted-foreground">
+            Breaking Lead Capture... it&apos;ll turn red in a few seconds
+          </span>
+        )}
+        {simulation.status === "broken" && (
+          <span className="font-medium">Now ask: why did Lead Capture fail?</span>
+        )}
+        {simulation.status === "failed" && <span className="text-fail">{simulation.message}</span>}
+      </div>
+    </div>
+  );
+}
+
 function fleetTone(workflows: Workflow[] | null): TraceTone {
   if (!workflows || workflows.length === 0) return "idle";
   if (workflows.some((workflow) => workflow.status === "failing")) return "fail";
@@ -157,6 +195,8 @@ export default function DashboardPage() {
     busy,
     sendMessage,
   } = useWorkspace();
+  const { state: auth } = useAuth();
+  const isDemo = auth.status === "authenticated" && auth.user.is_demo;
 
   const input = useRef<ChatInputHandle>(null);
   const log = useRef<HTMLDivElement>(null);
@@ -241,6 +281,7 @@ export default function DashboardPage() {
 
       <div className="px-5 pt-1 pb-4 md:px-8 md:pb-6">
         <div className="mx-auto w-full max-w-4xl">
+          {isDemo && <SimulateFailure />}
           {focused && (
             <div className="mb-2 flex">
               <span className="inline-flex max-w-full items-center gap-2 rounded-full border bg-panel-raised py-1 pr-1 pl-3 text-xs">

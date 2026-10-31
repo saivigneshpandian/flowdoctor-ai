@@ -19,6 +19,15 @@ class Me(BaseModel):
     email: str
     webhook_url: str
     has_connection: bool
+    is_demo: bool = False
+
+
+class SimulateFailureResult(BaseModel):
+    workflow_id: str
+    workflow_name: str
+    # Unresolved failures before the test lead, so the frontend can tell when a new one appears.
+    failed_count: int
+    cooldown_seconds: int
 
 
 class ConnectRequest(BaseModel):

@@ -182,7 +182,12 @@ const MOCK_USER: Me = {
   email: "demo@flowdoctor.test",
   webhook_url: "http://localhost:8000/webhook/n8n-error/mock-token",
   has_connection: true,
+  is_demo: true,
 };
+const SIMULATE_COOLDOWN_MS = 120_000;
+const SIMULATED_FAILURE_DELAY_MS = 3_000;
+let lastSimulation = 0;
+let simulatedFailures = 0;
 const LOGGED_OUT_KEY = "flowdoctor-mock-logged-out";
 
 // Survives the full page load that logout does. Falls back to logged in if storage is blocked.
@@ -238,9 +243,17 @@ export const mockApi: ApiClient = {
 
   async getWorkflows() {
     await delay(350);
-    return [failingWorkflow(), pendingWorkflow(), healthyWorkflow(), idleWorkflow()].map(
-      applyRepairs,
-    );
+    return [failingWorkflow(), pendingWorkflow(), healthyWorkflow(), idleWorkflow()]
+      .map(applyRepairs)
+      .map((workflow) =>
+        workflow.id === "wf_lead_routing" && simulatedFailures > 0
+          ? {
+              ...workflow,
+              status: "failing" as const,
+              failed_count: workflow.failed_count + simulatedFailures,
+            }
+          : workflow,
+      );
   },
 
   async getWorkflowError(workflowId) {
@@ -334,5 +347,26 @@ export const mockApi: ApiClient = {
   async getIncidents() {
     await delay(500);
     return incidents().map(applyIncidentChanges);
+  },
+
+  async simulateFailure() {
+    await delay(900);
+    const waited = Date.now() - lastSimulation;
+    if (waited < SIMULATE_COOLDOWN_MS) {
+      const seconds = Math.ceil((SIMULATE_COOLDOWN_MS - waited) / 1000);
+      throw new ApiError(`This was run recently. Try again in ${seconds} seconds.`, 429);
+    }
+    lastSimulation = Date.now();
+    const [workflow] = [failingWorkflow()].map(applyRepairs);
+    const failed_count = workflow.failed_count + simulatedFailures;
+    setTimeout(() => {
+      simulatedFailures += 1;
+    }, SIMULATED_FAILURE_DELAY_MS);
+    return {
+      workflow_id: workflow.id,
+      workflow_name: workflow.name,
+      failed_count,
+      cooldown_seconds: SIMULATE_COOLDOWN_MS / 1000,
+    };
   },
 };
