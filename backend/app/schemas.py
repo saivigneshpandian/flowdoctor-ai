@@ -47,6 +47,8 @@ class Workflow(BaseModel):
     status: Literal["healthy", "failing", "pending"]
     last_execution_at: str | None
     failed_count: int
+    # Only ever true for the demo account, on a workflow with a known demo bug.
+    can_simulate: bool = False
 
 
 class WorkflowError(BaseModel):

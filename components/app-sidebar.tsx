@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, ClipboardList, Plus, RefreshCw, TriangleAlert } from "lucide-react";
+import { Activity, ClipboardList, FlaskConical, Loader2, Plus, RefreshCw, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
@@ -38,6 +38,9 @@ export function AppSidebar({ onNavigate }: { onNavigate?: () => void }) {
     startNewChat,
     busy,
     sendMessage,
+    simulations,
+    simulationCooldowns,
+    simulateFailure,
   } = useWorkspace();
 
   function goToChat() {
@@ -53,6 +56,11 @@ export function AppSidebar({ onNavigate }: { onNavigate?: () => void }) {
 
   function selectWorkflow(workflow: Workflow) {
     if (focusedWorkflowId !== workflow.id) void openWorkflow(workflow);
+    goToChat();
+  }
+
+  function simulate(workflow: Workflow) {
+    void simulateFailure(workflow);
     goToChat();
   }
 
@@ -156,6 +164,29 @@ export function AppSidebar({ onNavigate }: { onNavigate?: () => void }) {
                   focused={focusedWorkflowId === workflow.id}
                   onSelect={() => selectWorkflow(workflow)}
                 />
+                {workflow.can_simulate && (
+                  <div className="pt-0.5 pr-3 pb-1.5 pl-8">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="xs"
+                      disabled={
+                        busy ||
+                        simulations[workflow.id]?.status === "breaking" ||
+                        simulationCooldowns[workflow.id]
+                      }
+                      onClick={() => simulate(workflow)}
+                      className="gap-1"
+                    >
+                      {simulations[workflow.id]?.status === "breaking" ? (
+                        <Loader2 aria-hidden className="size-3 animate-spin" />
+                      ) : (
+                        <FlaskConical aria-hidden className="size-3" />
+                      )}
+                      Simulate failure
+                    </Button>
+                  </div>
+                )}
                 {focusedWorkflowId === workflow.id && workflow.failed_count > 0 && (
                   <WorkflowErrorPanel
                     workflowId={workflow.id}

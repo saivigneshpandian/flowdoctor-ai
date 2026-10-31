@@ -126,7 +126,10 @@ async def workflows(
     user: dict[str, Any] = Depends(auth.current_user),
     client: N8nClient = Depends(connected_client),
 ) -> list[Workflow]:
-    return await list_workflow_health(client, user["id"])
+    health = await list_workflow_health(client, user["id"])
+    if not auth.is_demo_user(user):
+        return health
+    return [w.model_copy(update={"can_simulate": demo.can_simulate(w.name)}) for w in health]
 
 
 @router.get("/workflows/{workflow_id}/error", response_model=WorkflowError)
@@ -262,13 +265,14 @@ def demo_user(user: dict[str, Any] = Depends(auth.current_user)) -> dict[str, An
     return user
 
 
-@router.post("/demo/simulate-failure", response_model=SimulateFailureResult)
+@router.post("/demo/simulate-failure/{workflow_id}", response_model=SimulateFailureResult)
 async def simulate_failure(
+    workflow_id: str,
     user: dict[str, Any] = Depends(demo_user),
     client: N8nClient = Depends(connected_client),
 ) -> SimulateFailureResult:
     try:
-        return await demo.simulate_failure(user["id"], client)
+        return await demo.simulate_failure(user["id"], workflow_id, client)
     except demo.CoolingDown as exc:
         raise HTTPException(429, str(exc), headers={"Retry-After": str(exc.retry_after)}) from exc
     except demo.SimulationError as exc:

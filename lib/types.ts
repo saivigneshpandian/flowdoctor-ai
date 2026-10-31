@@ -6,6 +6,8 @@ export interface Workflow {
   status: WorkflowStatus;
   last_execution_at: string | null;
   failed_count: number;
+  // Only ever true for the demo account, on a workflow with a known demo bug.
+  can_simulate?: boolean;
 }
 
 export interface WorkflowError {
@@ -191,5 +193,5 @@ export interface ApiClient {
   rejectFix(proposalId: string): Promise<RejectResponse>;
   completeFix(proposalId: string): Promise<RepairResult>;
   getIncidents(): Promise<Incident[]>;
-  simulateFailure(): Promise<SimulateFailureResult>;
+  simulateFailure(workflowId: string): Promise<SimulateFailureResult>;
 }

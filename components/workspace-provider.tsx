@@ -47,10 +47,9 @@ type ActionStatus =
   | "closed";
 
 export type SimulationState =
-  | { status: "idle" }
-  | { status: "breaking" }
-  | { status: "broken" }
-  | { status: "failed"; message: string };
+  | { status: "breaking"; workflowName: string }
+  | { status: "broken"; workflowName: string }
+  | { status: "failed"; workflowName: string; message: string };
 
 export interface ActionState {
   status: ActionStatus;
@@ -78,9 +77,9 @@ interface WorkspaceValue {
   sendMessage: (text: string) => Promise<boolean>;
   decide: (proposalId: string, decision: "approve" | "reject") => Promise<void>;
   completeManualFix: (proposalId: string) => Promise<void>;
-  simulation: SimulationState;
-  simulationCoolingDown: boolean;
-  simulateFailure: () => Promise<void>;
+  simulations: Record<string, SimulationState>;
+  simulationCooldowns: Record<string, boolean>;
+  simulateFailure: (workflow: Workflow) => Promise<void>;
 }
 
 const WorkspaceContext = createContext<WorkspaceValue | null>(null);
@@ -156,15 +155,15 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [sendingState, setSendingState] = useState<{ kind: SendingKind; view: number } | null>(null);
   const [viewId, setViewId] = useState(0);
   const [actions, setActions] = useState<Record<string, ActionState>>({});
-  const [simulation, setSimulation] = useState<SimulationState>({ status: "idle" });
-  const [simulationCoolingDown, setSimulationCoolingDown] = useState(false);
+  const [simulations, setSimulations] = useState<Record<string, SimulationState>>({});
+  const [simulationCooldowns, setSimulationCooldowns] = useState<Record<string, boolean>>({});
 
   const nextId = useRef(0);
   const inFlight = useRef(new Set<string>());
   const pollRunning = useRef(false);
   const pollQueued = useRef(false);
   const chatInFlight = useRef(false);
-  const simulationInFlight = useRef(false);
+  const simulationsInFlight = useRef(new Set<string>());
   // Goes up each time the user switches chats. A reply that was started under an older view
   // belongs to a chat that's no longer on screen, so it must not be added to this one.
   const view = useRef(0);
@@ -464,7 +463,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const busy =
     sendingState !== null ||
     threadLoading ||
-    simulation.status === "breaking" ||
+    (focusedWorkflowId !== null && simulations[focusedWorkflowId]?.status === "breaking") ||
     Object.values(actions).some((action) =>
       ["approving", "rejecting", "submitting"].includes(action.status),
     );
@@ -474,7 +473,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       // The ref updates immediately, so a double click can't get in before `busy` re-renders.
       if (busy || chatInFlight.current) return false;
       chatInFlight.current = true;
-      setSimulation((current) => (current.status === "broken" ? { status: "idle" } : current));
+      // The hint has done its job once something is asked.
+      setSimulations((current) =>
+        Object.fromEntries(Object.entries(current).filter(([, state]) => state.status !== "broken")),
+      );
 
       const startedIn = view.current;
       const threadId = activeThreadId.current;
@@ -519,46 +521,63 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     [appendAgent, busy, focusedWorkflowId, openThread, refreshThreads, refreshWorkflows, settleCards],
   );
 
-  const simulateFailure = useCallback(async () => {
-    if (busy || simulationCoolingDown || simulationInFlight.current) return;
-    simulationInFlight.current = true;
-    setSimulation({ status: "breaking" });
-
-    try {
-      const result = await api.simulateFailure();
-      setSimulationCoolingDown(true);
-      setTimeout(() => setSimulationCoolingDown(false), result.cooldown_seconds * 1000);
-
-      // The count, not the colour: it may already be red from older failures, and it goes amber
-      // as soon as a background diagnosis saves a fix.
-      const deadline = Date.now() + SIMULATION_TIMEOUT_MS;
-      while (Date.now() < deadline) {
-        const next = await api.getWorkflows().catch(() => null);
-        if (next) {
-          setWorkflows(next);
-          setWorkflowsError(null);
-          setLastSyncedAt(Date.now());
-          const target = next.find((workflow) => workflow.id === result.workflow_id);
-          if (target && target.failed_count > result.failed_count) {
-            // A chat only ever talks about its own workflow, so the question has to be asked here.
-            await openWorkflow(target);
-            void refreshThreads();
-            setSimulation({ status: "broken" });
-            return;
-          }
-        }
-        await new Promise((resolve) => setTimeout(resolve, SIMULATION_POLL_MS));
+  const simulateFailure = useCallback(
+    async (workflow: Workflow) => {
+      const workflowId = workflow.id;
+      const workflowName = workflow.name;
+      if (busy || simulationCooldowns[workflowId] || simulationsInFlight.current.has(workflowId)) {
+        return;
       }
-      setSimulation({
-        status: "failed",
-        message: "The test lead was sent, but no new failure has shown up in n8n yet.",
-      });
-    } catch (error) {
-      setSimulation({ status: "failed", message: errorMessage(error) });
-    } finally {
-      simulationInFlight.current = false;
-    }
-  }, [busy, openWorkflow, refreshThreads, simulationCoolingDown]);
+      simulationsInFlight.current.add(workflowId);
+      const show = (state: SimulationState) =>
+        setSimulations((current) => ({ ...current, [workflowId]: state }));
+      show({ status: "breaking", workflowName });
+
+      try {
+        await openWorkflow(workflow);
+        const openedIn = view.current;
+        const threadId = activeThreadId.current;
+
+        const result = await api.simulateFailure(workflowId);
+        setSimulationCooldowns((current) => ({ ...current, [workflowId]: true }));
+        setTimeout(
+          () => setSimulationCooldowns((current) => ({ ...current, [workflowId]: false })),
+          result.cooldown_seconds * 1000,
+        );
+        // Open fixes were just rejected, so their cards on screen are out of date.
+        if (threadId && view.current === openedIn) await openThread(threadId);
+
+        // The count, not the colour: it may already be red from older failures, and it goes amber
+        // as soon as a background diagnosis saves a fix.
+        const deadline = Date.now() + SIMULATION_TIMEOUT_MS;
+        while (Date.now() < deadline) {
+          const next = await api.getWorkflows().catch(() => null);
+          if (next) {
+            setWorkflows(next);
+            setWorkflowsError(null);
+            setLastSyncedAt(Date.now());
+            const target = next.find((item) => item.id === workflowId);
+            if (target && target.failed_count > result.failed_count) {
+              void refreshThreads();
+              show({ status: "broken", workflowName });
+              return;
+            }
+          }
+          await new Promise((resolve) => setTimeout(resolve, SIMULATION_POLL_MS));
+        }
+        show({
+          status: "failed",
+          workflowName,
+          message: "The test request was sent, but no new failure has shown up in n8n yet.",
+        });
+      } catch (error) {
+        show({ status: "failed", workflowName, message: errorMessage(error) });
+      } finally {
+        simulationsInFlight.current.delete(workflowId);
+      }
+    },
+    [busy, openThread, openWorkflow, refreshThreads, simulationCooldowns],
+  );
 
   const sending = sendingState?.view === viewId ? sendingState.kind : null;
 
@@ -584,8 +603,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       sendMessage,
       decide,
       completeManualFix,
-      simulation,
-      simulationCoolingDown,
+      simulations,
+      simulationCooldowns,
       simulateFailure,
     }),
     [
@@ -609,8 +628,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       sendMessage,
       decide,
       completeManualFix,
-      simulation,
-      simulationCoolingDown,
+      simulations,
+      simulationCooldowns,
       simulateFailure,
     ],
   );

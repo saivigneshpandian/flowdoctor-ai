@@ -88,7 +88,8 @@ const realApi: ApiClient = {
   rejectFix: (id) => request(`/fix/${encodeURIComponent(id)}/reject`),
   completeFix: (id) => request(`/fix/${encodeURIComponent(id)}/done`),
   getIncidents: () => request("/incidents", undefined, "GET", READ_TIMEOUT_MS),
-  simulateFailure: () => request("/demo/simulate-failure", undefined, "POST", READ_TIMEOUT_MS),
+  simulateFailure: (id) =>
+    request(`/demo/simulate-failure/${encodeURIComponent(id)}`, undefined, "POST", READ_TIMEOUT_MS),
 };
 
 export const api: ApiClient = USE_MOCKS ? mockApi : realApi;

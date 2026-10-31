@@ -373,9 +373,9 @@ Asks Telegram what it has on file. `url` should be empty, which means polling is
 
 **Only one backend can poll a bot.** It only polls when `PUBLIC_API_URL` starts with `https://`. If you run the backend on your laptop with the same bot, leave `PUBLIC_API_URL` empty there, or it will take updates away from the server.
 
-## The "Simulate a failure" button
+## The "Simulate failure" buttons
 
-Logged in as the demo account (`DEMO_EMAIL`), the dashboard shows a **Simulate a failure** button, so judges can try the full flow. No other account sees it, and the backend refuses it for anyone else. It needs no new settings.
+Logged in as the demo account (`DEMO_EMAIL`), workflows with a known demo bug get a small **Simulate failure** button in the sidebar, so judges can try the full flow. Other workflows, such as Error Handler, don't show it. No other account sees it, and the backend refuses it for anyone else. It needs no new settings.
 
 **EC2**, from `~/flowdoctor-ai`:
 
@@ -394,18 +394,23 @@ docker compose up -d
 ```
 Restarts them with the new code.
 
-Each click does this through the n8n API, at most once per 2 minutes:
+| Workflow (exact name) | Node it breaks | Test request |
+| --- | --- | --- |
+| `Lead Capture` | `Normalize Lead` | A lead with a capital `Email` field |
+| `Order Processing` | `Calculate Total` | An order without the `order` wrapper |
 
-1. Rejects any open fixes for Lead Capture.
-2. Puts the original bug back in Lead Capture's `Normalize Lead` node and republishes the workflow.
-3. Sends one test lead with a capital `Email` field to the workflow's webhook.
+Each click opens that workflow's chat and does this through the n8n API, at most once per 2 minutes per workflow:
 
-It needs a workflow named exactly `Lead Capture`, with a `Normalize Lead` node and a webhook node. If that's missing, the button shows the problem and changes nothing.
+1. Rejects that workflow's open fixes.
+2. Puts the original bug back in the node and republishes the workflow.
+3. Sends one test request to the workflow's webhook.
+
+The workflow also needs a webhook node. If the node or webhook is missing, the button shows the problem and changes nothing.
 
 **What this means for you:**
 
-- **It overwrites that node.** Point the demo account at an n8n where it's fine for Lead Capture to be broken on purpose.
-- **It can message you.** If Lead Capture has the Error Handler workflow set up, every click also starts a background diagnosis, which uses LLM quota and sends an alert to the demo account's Telegram chat.
+- **It overwrites those nodes.** Point the demo account at an n8n where it's fine for these workflows to be broken on purpose.
+- **It can message you.** If a workflow has the Error Handler workflow set up, every click also starts a background diagnosis, which uses LLM quota and sends an alert to the demo account's Telegram chat.
 - **Judges share one account.** One judge's click can reject a fix another judge is looking at, and all of them can approve fixes.
 - **The limit resets on restart.** It's kept in the backend's memory.
 

@@ -186,8 +186,9 @@ const MOCK_USER: Me = {
 };
 const SIMULATE_COOLDOWN_MS = 120_000;
 const SIMULATED_FAILURE_DELAY_MS = 3_000;
-let lastSimulation = 0;
-let simulatedFailures = 0;
+const SIMULATED_WORKFLOWS = new Set(["wf_lead_routing", "wf_invoice_sync"]);
+const lastSimulations = new Map<string, number>();
+const simulatedFailures = new Map<string, number>();
 const LOGGED_OUT_KEY = "flowdoctor-mock-logged-out";
 
 // Survives the full page load that logout does. Falls back to logged in if storage is blocked.
@@ -245,15 +246,16 @@ export const mockApi: ApiClient = {
     await delay(350);
     return [failingWorkflow(), pendingWorkflow(), healthyWorkflow(), idleWorkflow()]
       .map(applyRepairs)
-      .map((workflow) =>
-        workflow.id === "wf_lead_routing" && simulatedFailures > 0
-          ? {
-              ...workflow,
-              status: "failing" as const,
-              failed_count: workflow.failed_count + simulatedFailures,
-            }
-          : workflow,
-      );
+      .map((workflow) => {
+        const extra = simulatedFailures.get(workflow.id) ?? 0;
+        return {
+          ...workflow,
+          can_simulate: SIMULATED_WORKFLOWS.has(workflow.id),
+          ...(extra > 0
+            ? { status: "failing" as const, failed_count: workflow.failed_count + extra }
+            : {}),
+        };
+      });
   },
 
   async getWorkflowError(workflowId) {
@@ -349,23 +351,23 @@ export const mockApi: ApiClient = {
     return incidents().map(applyIncidentChanges);
   },
 
-  async simulateFailure() {
+  async simulateFailure(workflowId) {
     await delay(900);
-    const waited = Date.now() - lastSimulation;
+    const waited = Date.now() - (lastSimulations.get(workflowId) ?? 0);
     if (waited < SIMULATE_COOLDOWN_MS) {
       const seconds = Math.ceil((SIMULATE_COOLDOWN_MS - waited) / 1000);
       throw new ApiError(`This was run recently. Try again in ${seconds} seconds.`, 429);
     }
-    lastSimulation = Date.now();
-    const [workflow] = [failingWorkflow()].map(applyRepairs);
-    const failed_count = workflow.failed_count + simulatedFailures;
+    lastSimulations.set(workflowId, Date.now());
+    const workflow = (await mockApi.getWorkflows()).find((item) => item.id === workflowId);
+    if (!workflow) throw new ApiError("Workflow not found.", 404);
     setTimeout(() => {
-      simulatedFailures += 1;
+      simulatedFailures.set(workflowId, (simulatedFailures.get(workflowId) ?? 0) + 1);
     }, SIMULATED_FAILURE_DELAY_MS);
     return {
       workflow_id: workflow.id,
       workflow_name: workflow.name,
-      failed_count,
+      failed_count: workflow.failed_count,
       cooldown_seconds: SIMULATE_COOLDOWN_MS / 1000,
     };
   },
